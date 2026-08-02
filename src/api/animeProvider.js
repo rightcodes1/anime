@@ -94,29 +94,28 @@ class KitsuProvider extends AnimeProvider {
         }
     }
 
-    _mapAnimeData(item) {
-        const attr = item.attributes;
-        return {
-            providerId: parseInt(item.id),
-            englishTitle: attr.titles.en || attr.titles.en_jp || attr.canonicalTitle,
-            romajiTitle: attr.titles.en_jp || attr.canonicalTitle,
-            japaneseTitle: attr.titles.ja_jp || '',
-            synopsis: attr.synopsis,
-            posterUrl: attr.posterImage?.large || attr.posterImage?.original,
-            coverUrl: attr.coverImage?.large || attr.coverImage?.original,
-            bannerUrl: attr.coverImage?.original,
-            status: attr.status,
-            startDate: attr.startDate,
-            endDate: attr.endDate,
-            episodeCount: attr.episodeCount,
-            episodeLength: attr.episodeLength,
-            format: attr.showType,
-            popularity: attr.popularityRank,
-            communityRating: parseFloat(attr.averageRating),
-            year: attr.startDate ? new Date(attr.startDate).getFullYear() : null,
-            season: attr.season
-        };
-    }
+_mapAnimeData(item) {
+    const attr = item.attributes;
+    return {
+        providerId: parseInt(item.id),
+        englishTitle: attr.titles.en || attr.titles.en_jp || attr.canonicalTitle,
+        romajiTitle: attr.titles.en_jp || attr.canonicalTitle,
+        japaneseTitle: attr.titles.ja_jp || '',
+        synopsis: attr.synopsis,
+        posterUrl: attr.posterImage?.large || attr.posterImage?.original,
+        coverUrl: attr.coverImage?.large || attr.coverImage?.original,
+        bannerUrl: attr.coverImage?.original,
+        status: attr.status,
+        startDate: attr.startDate,
+        endDate: attr.endDate,
+        episodeCount: attr.episodeCount,
+        episodeLength: attr.episodeLength,
+        format: attr.showType,
+        popularity: attr.popularityRank,
+        communityRating: parseFloat(attr.averageRating),
+        year: attr.startDate ? new Date(attr.startDate).getFullYear() : null,
+        season: attr.season
+    };
 }
 
 module.exports = {
