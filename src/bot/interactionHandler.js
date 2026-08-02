@@ -58,33 +58,63 @@ class InteractionHandler {
             await interaction.showModal(modal);
         } else if (customId === 'continue_watching') {
             await this.handleContinueWatching(interaction);
-        } else if (customId.startsWith('add_')) {
-            const providerId = parseInt(customId.split('_')[1], 10);
-            await interaction.deferUpdate();
+        } else if (customId === 'cancel_search') {
+            // This button lives on a message the interaction hasn't replied
+            // to or deferred yet, so it must acknowledge + edit in one call.
+            await interaction.update({ content: "Search cancelled.", embeds: [], components: [] });
+        } else if (customId.startsWith('status_')) {
+            // Format: status_{providerId}_{STATUSKEY}
+            const parts = customId.split('_');
+            const providerId = parseInt(parts[1], 10);
+            const statusKey = parts.slice(2).join('_'); // e.g. COMPLETED, WATCHING, ON_HOLD, PLAN, DROPPED, CANCEL
 
+            if (statusKey === 'CANCEL') {
+                // Acknowledge and close the preview
+                await interaction.update({ content: 'Cancelled.', embeds: [], components: [] });
+                return;
+            }
+
+            // For options that need progress, show a modal to collect season/episode.
+            if (['WATCHING', 'ON_HOLD', 'DROPPED'].includes(statusKey)) {
+                await this.showProgressModal(interaction, providerId, statusKey);
+                return;
+            }
+
+            // Immediate actions: PLAN and COMPLETED
+            await interaction.deferUpdate();
             const animeData = await animeService.getAnimeFromProvider(providerId);
             if (!animeData) {
                 await interaction.editReply({ content: "That title no longer exists on Kitsu.", embeds: [], components: [] });
                 return;
             }
 
-            await animeService.addAnimeToLibrary(animeData, 'Watching');
+            if (statusKey === 'PLAN') {
+                await animeService.addAnimeToLibrary(animeData, 'Plan To Watch');
+                await interaction.editReply({ content: `✅ Saved **${animeData.englishTitle}** as Plan To Watch.`, embeds: [], components: [] });
+                await this.dashboardService.recoverOrcreate();
+                return;
+            }
 
-            await interaction.editReply({
-                content: `✅ Added **${animeData.englishTitle}** to your library!`,
-                embeds: [],
-                components: []
-            });
-            await this.dashboardService.recoverOrcreate();
-        } else if (customId === 'cancel_search') {
-            // This button lives on a message the interaction hasn't replied
-            // to or deferred yet, so it must acknowledge + edit in one call.
-            await interaction.update({ content: "Search cancelled.", embeds: [], components: [] });
+            if (statusKey === 'COMPLETED') {
+                // Save anime and mark as completed. If episode_count known, set progress to max.
+                await animeService.addAnimeToLibrary(animeData, 'Completed');
+                if (animeData.episodeCount) {
+                    await animeService.updateProgress(providerId, {
+                        currentEpisode: animeData.episodeCount,
+                        status: 'Completed',
+                        eventType: 'Added as Completed'
+                    });
+                }
+                await interaction.editReply({ content: `✅ Saved **${animeData.englishTitle}** as Completed.`, embeds: [], components: [] });
+                await this.dashboardService.recoverOrcreate();
+                return;
+            }
+
         } else if (customId.startsWith('update_ep_')) {
             const providerId = customId.split('_')[2];
             await this.showEpisodeUpdateModal(interaction, providerId);
         } else if (customId === 'view_library') {
-            // New handler: respond quickly so Discord doesn't report a timeout.
+            // Respond quickly so Discord doesn't report a timeout.
             await interaction.deferReply({ ephemeral: true });
 
             try {
@@ -115,6 +145,30 @@ class InteractionHandler {
                 await interaction.editReply({ content: 'Failed to fetch your library — please try again later.' });
             }
         }
+    }
+
+    async showProgressModal(interaction, providerId, statusKey) {
+        // Collect season (optional) and episode (required) in a single modal.
+        const modal = new ModalBuilder()
+            .setCustomId(`progress_modal_${providerId}_${statusKey}`)
+            .setTitle('Set Progress');
+
+        const seasonInput = new TextInputBuilder()
+            .setCustomId('season_number')
+            .setLabel('Current season (optional)')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false);
+
+        const epInput = new TextInputBuilder()
+            .setCustomId('ep_number')
+            .setLabel('Current episode')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true);
+
+        modal.addComponents(new ActionRowBuilder().addComponents(seasonInput));
+        modal.addComponents(new ActionRowBuilder().addComponents(epInput));
+
+        await interaction.showModal(modal);
     }
 
     async handleContinueWatching(interaction) {
@@ -193,6 +247,51 @@ class InteractionHandler {
 
             await interaction.editReply(content);
             await this.dashboardService.recoverOrcreate();
+        } else if (interaction.customId.startsWith('progress_modal_')) {
+            // Format: progress_modal_{providerId}_{statusKey}
+            const parts = interaction.customId.split('_');
+            const providerId = parseInt(parts[2], 10);
+            const statusKey = parts.slice(3).join('_');
+
+            const seasonRaw = interaction.fields.getTextInputValue('season_number') || null;
+            const epRaw = interaction.fields.getTextInputValue('ep_number');
+
+            const season = seasonRaw ? (parseInt(seasonRaw, 10) || null) : null;
+            const ep = parseInt(epRaw, 10);
+
+            await interaction.deferReply({ ephemeral: true });
+
+            if (Number.isNaN(ep) || ep < 0) {
+                return await interaction.editReply("Please enter a valid, non-negative episode number.");
+            }
+
+            // Fetch metadata from provider (we haven't saved it yet)
+            const animeData = await animeService.getAnimeFromProvider(providerId);
+            if (!animeData) {
+                return await interaction.editReply("That title no longer exists on Kitsu.");
+            }
+
+            // Map statusKey to human status
+            const statusMap = {
+                'WATCHING': 'Watching',
+                'ON_HOLD': 'On Hold',
+                'DROPPED': 'Dropped'
+            };
+            const status = statusMap[statusKey] || 'Watching';
+
+            // Save anime first, then save progress in one or two calls
+            await animeService.addAnimeToLibrary(animeData, status);
+
+            // Update progress fields
+            await animeService.updateProgress(providerId, {
+                currentEntry: season,
+                currentEpisode: ep,
+                status: status,
+                eventType: `Added as ${status}`
+            });
+
+            await interaction.editReply({ content: `✅ Saved **${animeData.englishTitle}** as ${status} (ep ${ep}${animeData.episodeCount ? `/${animeData.episodeCount}` : ''}).` });
+            await this.dashboardService.recoverOrcreate();
         }
     }
 
@@ -211,16 +310,15 @@ class InteractionHandler {
     }
 
     buildPreviewButtons(providerId) {
+        // Status selection buttons shown on preview (no DB changes until user picks one)
         return new ActionRowBuilder()
             .addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`add_${providerId}`)
-                    .setLabel('Add to Library')
-                    .setStyle(ButtonStyle.Success),
-                new ButtonBuilder()
-                    .setCustomId('cancel_search')
-                    .setLabel('Cancel')
-                    .setStyle(ButtonStyle.Danger)
+                new ButtonBuilder().setCustomId(`status_${providerId}_COMPLETED`).setLabel('🟢 Finished').setStyle(ButtonStyle.Success),
+                new ButtonBuilder().setCustomId(`status_${providerId}_WATCHING`).setLabel('🔵 Currently Watching').setStyle(ButtonStyle.Primary),
+                new ButtonBuilder().setCustomId(`status_${providerId}_ON_HOLD`).setLabel('⏸️ On Hold').setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder().setCustomId(`status_${providerId}_PLAN`).setLabel('📅 Plan to Watch').setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder().setCustomId(`status_${providerId}_DROPPED`).setLabel('🔴 Dropped').setStyle(ButtonStyle.Danger),
+                new ButtonBuilder().setCustomId(`status_${providerId}_CANCEL`).setLabel('❌ Cancel').setStyle(ButtonStyle.Secondary)
             );
     }
 }
