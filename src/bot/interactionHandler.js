@@ -211,12 +211,12 @@ class InteractionHandler {
 
             const anime = results.provider[0];
             const embed = this.buildPreviewEmbed(anime);
-            const row = this.buildPreviewButtons(anime.providerId);
+            const rows = this.buildPreviewButtons(anime.providerId);
 
             await interaction.editReply({
                 content: "Is this the anime you're looking for?",
                 embeds: [embed],
-                components: [row]
+                components: rows
             });
         } else if (interaction.customId.startsWith('ep_modal_')) {
             const providerId = parseInt(interaction.customId.split('_')[2], 10);
@@ -311,15 +311,21 @@ class InteractionHandler {
 
     buildPreviewButtons(providerId) {
         // Status selection buttons shown on preview (no DB changes until user picks one)
-        return new ActionRowBuilder()
+        const row1 = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder().setCustomId(`status_${providerId}_COMPLETED`).setLabel('🟢 Finished').setStyle(ButtonStyle.Success),
                 new ButtonBuilder().setCustomId(`status_${providerId}_WATCHING`).setLabel('🔵 Currently Watching').setStyle(ButtonStyle.Primary),
                 new ButtonBuilder().setCustomId(`status_${providerId}_ON_HOLD`).setLabel('⏸️ On Hold').setStyle(ButtonStyle.Secondary),
                 new ButtonBuilder().setCustomId(`status_${providerId}_PLAN`).setLabel('📅 Plan to Watch').setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder().setCustomId(`status_${providerId}_DROPPED`).setLabel('🔴 Dropped').setStyle(ButtonStyle.Danger),
+                new ButtonBuilder().setCustomId(`status_${providerId}_DROPPED`).setLabel('🔴 Dropped').setStyle(ButtonStyle.Danger)
+            );
+
+        const row2 = new ActionRowBuilder()
+            .addComponents(
                 new ButtonBuilder().setCustomId(`status_${providerId}_CANCEL`).setLabel('❌ Cancel').setStyle(ButtonStyle.Secondary)
             );
+
+        return [row1, row2];
     }
 }
 
