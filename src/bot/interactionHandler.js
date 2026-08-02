@@ -83,6 +83,37 @@ class InteractionHandler {
         } else if (customId.startsWith('update_ep_')) {
             const providerId = customId.split('_')[2];
             await this.showEpisodeUpdateModal(interaction, providerId);
+        } else if (customId === 'view_library') {
+            // New handler: respond quickly so Discord doesn't report a timeout.
+            await interaction.deferReply({ ephemeral: true });
+
+            try {
+                const [watching, favorites, recent] = await Promise.all([
+                    animeService.getCurrentlyWatching(10),
+                    animeService.getFavorites(10),
+                    animeService.getRecentUpdates(10)
+                ]);
+
+                const sections = [];
+
+                if (watching.length) {
+                    sections.push('**Currently Watching**\n' + watching.map(w => `**${w.english_title}** — ep ${w.current_episode}${w.episode_count ? `/${w.episode_count}` : ''}`).join('\n'));
+                }
+
+                if (favorites.length) {
+                    sections.push('**Favorites**\n' + favorites.map(f => `**${f.english_title}**`).join('\n'));
+                }
+
+                if (recent.length) {
+                    sections.push('**Recent Updates**\n' + recent.map(r => `**${r.english_title}** — ${r.status || 'Unknown'} (updated)` ).join('\n'));
+                }
+
+                const content = sections.length ? sections.join('\n\n') : "Your library is empty.";
+                await interaction.editReply({ content });
+            } catch (err) {
+                logger.error('Failed to build library view:', err);
+                await interaction.editReply({ content: 'Failed to fetch your library — please try again later.' });
+            }
         }
     }
 
