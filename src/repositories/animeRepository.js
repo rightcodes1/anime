@@ -1,5 +1,28 @@
 const db = require('../database/database');
+const values = [
+    animeData.providerId,
+    animeData.englishTitle,
+    animeData.romajiTitle,
+    animeData.japaneseTitle,
+    animeData.synopsis,
+    animeData.posterUrl,
+    animeData.coverUrl,
+    animeData.bannerUrl,
+    animeData.status,
+    animeData.startDate,
+    animeData.endDate,
+    animeData.season,
+    animeData.year,
+    animeData.episodeCount,
+    animeData.episodeLength,
+    animeData.format,
+    animeData.popularity,
+    animeData.communityRating
+];
 
+values.forEach((v, i) => {
+    console.log(i, typeof v, v);
+});
 function escapeLike(value) {
     // Escape SQLite LIKE wildcards so a title containing % or _ is matched
     // literally instead of as a wildcard.
