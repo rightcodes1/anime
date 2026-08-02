@@ -41,50 +41,55 @@ async save(animeData) {
         "communityRating"
     ];
 
-    console.log("========== ANIME DEBUG ==========");
-
-    fields.forEach((field, index) => {
-        const value = args[index];
-
-        console.log({
-            field,
-            type: typeof value,
-            isArray: Array.isArray(value),
-            value
+    try {
+        await db.execute({
+            sql: `INSERT INTO anime (
+                kitsu_id, english_title, romaji_title, japanese_title,
+                synopsis, poster_url, cover_url, banner_url,
+                status, start_date, end_date, season, year,
+                episode_count, episode_duration, format, popularity, community_rating,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT(kitsu_id) DO UPDATE SET
+                english_title = excluded.english_title,
+                romaji_title = excluded.romaji_title,
+                japanese_title = excluded.japanese_title,
+                synopsis = excluded.synopsis,
+                poster_url = excluded.poster_url,
+                cover_url = excluded.cover_url,
+                banner_url = excluded.banner_url,
+                status = excluded.status,
+                start_date = excluded.start_date,
+                end_date = excluded.end_date,
+                season = excluded.season,
+                year = excluded.year,
+                episode_count = excluded.episode_count,
+                episode_duration = excluded.episode_duration,
+                format = excluded.format,
+                popularity = excluded.popularity,
+                community_rating = excluded.community_rating,
+                updated_at = CURRENT_TIMESTAMP`,
+            args
         });
-    });
+    } catch (err) {
+        console.error("=== SAVE FAILED ===");
 
-    console.log("=================================");
+        fields.forEach((field, i) => {
+            console.error(
+                field,
+                "|",
+                typeof args[i],
+                "|",
+                Array.isArray(args[i]) ? "ARRAY" : "",
+                "|",
+                args[i]
+            );
+        });
 
-    await db.execute({
-        sql: `INSERT INTO anime (
-            kitsu_id, english_title, romaji_title, japanese_title,
-            synopsis, poster_url, cover_url, banner_url,
-            status, start_date, end_date, season, year,
-            episode_count, episode_duration, format, popularity, community_rating,
-            created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        ON CONFLICT(kitsu_id) DO UPDATE SET
-            english_title = excluded.english_title,
-            romaji_title = excluded.romaji_title,
-            japanese_title = excluded.japanese_title,
-            synopsis = excluded.synopsis,
-            poster_url = excluded.poster_url,
-            cover_url = excluded.cover_url,
-            banner_url = excluded.banner_url,
-            status = excluded.status,
-            start_date = excluded.start_date,
-            end_date = excluded.end_date,
-            season = excluded.season,
-            year = excluded.year,
-            episode_count = excluded.episode_count,
-            episode_duration = excluded.episode_duration,
-            format = excluded.format,
-            popularity = excluded.popularity,
-            community_rating = excluded.community_rating,
-            updated_at = CURRENT_TIMESTAMP`,
-        args
-    });
+        console.error(err);
+
+        throw err;
+    }
 
     return this.getById(animeData.providerId);
 }
