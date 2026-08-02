@@ -1,47 +1,41 @@
-async save(animeData) {
-    const args = [
-        animeData.providerId,
-        animeData.englishTitle,
-        animeData.romajiTitle,
-        animeData.japaneseTitle,
-        animeData.synopsis,
-        animeData.posterUrl,
-        animeData.coverUrl,
-        animeData.bannerUrl,
-        animeData.status,
-        animeData.startDate,
-        animeData.endDate,
-        animeData.season,
-        animeData.year,
-        animeData.episodeCount,
-        animeData.episodeLength,
-        animeData.format,
-        animeData.popularity,
-        animeData.communityRating
-    ];
+const db = require('../database/database');
 
-    const fields = [
-        "providerId",
-        "englishTitle",
-        "romajiTitle",
-        "japaneseTitle",
-        "synopsis",
-        "posterUrl",
-        "coverUrl",
-        "bannerUrl",
-        "status",
-        "startDate",
-        "endDate",
-        "season",
-        "year",
-        "episodeCount",
-        "episodeLength",
-        "format",
-        "popularity",
-        "communityRating"
-    ];
+function escapeLike(value) {
+    // Escape SQLite LIKE wildcards so a title containing % or _ is matched
+    // literally instead of as a wildcard.
+    return value.replace(/[\\%_]/g, ch => `\\${ch}`);
+}
 
-    try {
+class AnimeRepository {
+    async findByTitle(query) {
+        const escaped = `%${escapeLike(query)}%`;
+        const result = await db.execute({
+            sql: `SELECT * FROM anime WHERE 
+                  english_title LIKE ? ESCAPE '\\' OR 
+                  romaji_title LIKE ? ESCAPE '\\' OR 
+                  japanese_title LIKE ? ESCAPE '\\'`,
+            args: [escaped, escaped, escaped]
+        });
+        return result.rows;
+    }
+
+    async getById(kitsuId) {
+        const result = await db.execute({
+            sql: 'SELECT * FROM anime WHERE kitsu_id = ?',
+            args: [kitsuId]
+        });
+        return result.rows[0] || null;
+    }
+
+    /**
+     * Upserts anime metadata. Uses INSERT ... ON CONFLICT DO UPDATE instead of
+     * INSERT OR REPLACE so that:
+     *  - created_at is set once on first insert and never touched again
+     *    (REPLACE used to silently reset it on every re-save)
+     *  - year/season are actually persisted (they were computed by the
+     *    provider but previously missing from the column list entirely)
+     */
+    async save(animeData) {
         await db.execute({
             sql: `INSERT INTO anime (
                 kitsu_id, english_title, romaji_title, japanese_title,
@@ -69,27 +63,33 @@ async save(animeData) {
                 popularity = excluded.popularity,
                 community_rating = excluded.community_rating,
                 updated_at = CURRENT_TIMESTAMP`,
-            args
+            args: [
+                animeData.providerId,
+                animeData.englishTitle,
+                animeData.romajiTitle,
+                animeData.japaneseTitle,
+                animeData.synopsis,
+                animeData.posterUrl,
+                animeData.coverUrl,
+                animeData.bannerUrl,
+                animeData.status,
+                animeData.startDate,
+                animeData.endDate,
+                animeData.season,
+                animeData.year,
+                animeData.episodeCount,
+                animeData.episodeLength,
+                animeData.format,
+                animeData.popularity,
+                animeData.communityRating
+            ]
         });
-    } catch (err) {
-        console.error("=== SAVE FAILED ===");
-
-        fields.forEach((field, i) => {
-            console.error(
-                field,
-                "|",
-                typeof args[i],
-                "|",
-                Array.isArray(args[i]) ? "ARRAY" : "",
-                "|",
-                args[i]
-            );
-        });
-
-        console.error(err);
-
-        throw err;
+        return this.getById(animeData.providerId);
     }
 
-    return this.getById(animeData.providerId);
+    async delete(kitsuId) {
+        await db.execute({ sql: 'DELETE FROM anime WHERE kitsu_id = ?', args: [kitsuId] });
+    }
 }
+
+module.exports = new AnimeRepository();
