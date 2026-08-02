@@ -1,5 +1,5 @@
 async save(animeData) {
-    const values = [
+    const args = [
         animeData.providerId,
         animeData.englishTitle,
         animeData.romajiTitle,
@@ -20,7 +20,7 @@ async save(animeData) {
         animeData.communityRating
     ];
 
-    const fieldNames = [
+    const fields = [
         "providerId",
         "englishTitle",
         "romajiTitle",
@@ -41,17 +41,20 @@ async save(animeData) {
         "communityRating"
     ];
 
-    console.log("========== DEBUG ANIME DATA ==========");
+    console.log("========== ANIME DEBUG ==========");
 
-    values.forEach((value, index) => {
+    fields.forEach((field, index) => {
+        const value = args[index];
+
         console.log({
-            field: fieldNames[index],
+            field,
             type: typeof value,
-            value: value
+            isArray: Array.isArray(value),
+            value
         });
     });
 
-    console.log("======================================");
+    console.log("=================================");
 
     await db.execute({
         sql: `INSERT INTO anime (
@@ -80,7 +83,7 @@ async save(animeData) {
             popularity = excluded.popularity,
             community_rating = excluded.community_rating,
             updated_at = CURRENT_TIMESTAMP`,
-        args: values
+        args
     });
 
     return this.getById(animeData.providerId);
