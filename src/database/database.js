@@ -13,6 +13,7 @@ class Database {
     }
 
     async execute(stmt) {
+        // If stmt has args, sanitize them by converting undefined -> null
         if (stmt && typeof stmt === "object" && Array.isArray(stmt.args)) {
             console.log("========== SQL DEBUG ==========");
 
@@ -27,6 +28,19 @@ class Database {
                     }
                 );
             });
+
+            // Create a cleaned copy where `undefined` values are converted to `null`.
+            // The libsql/HRANA client doesn't accept `undefined` as a value.
+            const cleanedArgs = stmt.args.map(a => a === undefined ? null : a);
+
+            cleanedArgs.forEach((arg, index) => {
+                if (arg === null && stmt.args[index] === undefined) {
+                    console.log(`Arg ${index} converted from undefined -> null`);
+                }
+            });
+
+            // Replace args with cleanedArgs for the actual call
+            stmt = Object.assign({}, stmt, { args: cleanedArgs });
 
             console.log("===============================");
         }
