@@ -12,23 +12,27 @@ class Database {
         });
     }
 
-    async execute(stmt) {
-        return await this.client.execute(stmt);
+async execute(stmt) {
+    if (stmt && typeof stmt === "object" && Array.isArray(stmt.args)) {
+        console.log("========== SQL DEBUG ==========");
+
+        stmt.args.forEach((arg, index) => {
+            console.log(
+                `Arg ${index}:`,
+                {
+                    type: typeof arg,
+                    isArray: Array.isArray(arg),
+                    constructor: arg?.constructor?.name,
+                    value: arg
+                }
+            );
+        });
+
+        console.log("===============================");
     }
 
-    async transaction(stmts) {
-        return await this.client.batch(stmts, "write");
-    }
-
-    async runMigrations() {
-        logger.info("Running database migrations...");
-
-        // Ensure schema_version table exists
-        await this.execute(`
-            CREATE TABLE IF NOT EXISTS schema_version (
-                version INTEGER PRIMARY KEY
-            )
-        `);
+    return await this.client.execute(stmt);
+}
 
         const result = await this.execute("SELECT version FROM schema_version");
         let currentVersion = result.rows.length > 0 ? result.rows[0].version : 0;
