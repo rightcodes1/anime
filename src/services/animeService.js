@@ -4,6 +4,8 @@ const progressRepository = require('../repositories/progressRepository');
 const notesRepository = require('../repositories/notesRepository');
 const historyRepository = require('../repositories/historyRepository');
 const db = require('../database/database');
+const { sanitizeBindings } = require('../utils/sanitize');
+const { withTransaction } = require('../utils/transaction');
 
 class AnimeService {
     /**
@@ -28,10 +30,21 @@ class AnimeService {
     }
 
     async addAnimeToLibrary(animeData, initialStatus = 'Plan To Watch') {
-        const anime = await animeRepository.save(animeData);
-        const progress = await progressRepository.upsert(animeData.providerId, { status: initialStatus });
-        await historyRepository.add(animeData.providerId, 'Added', { status: initialStatus });
-        return { anime, progress };
+        // sanitize values to prevent undefined bindings
+        const sanitized = sanitizeBindings(animeData);
+
+        return withTransaction(db, async () => {
+            // Save anime metadata (upsert)
+            const anime = await animeRepository.save(sanitized);
+
+            // Upsert progress
+            const progress = await progressRepository.upsert(sanitized.providerId, { status: initialStatus });
+
+            // Add history entry
+            await historyRepository.add(sanitized.providerId, 'Added', { status: initialStatus });
+
+            return { anime, progress };
+        });
     }
 
     async getProgress(kitsuId) {
@@ -39,9 +52,12 @@ class AnimeService {
     }
 
     async updateProgress(kitsuId, progressData) {
-        const updated = await progressRepository.upsert(kitsuId, progressData);
-        await historyRepository.add(kitsuId, progressData.eventType || 'Progress Updated', progressData);
-        return updated;
+        const sanitizedProgress = sanitizeBindings(progressData);
+        return withTransaction(db, async () => {
+            const updated = await progressRepository.upsert(kitsuId, sanitizedProgress);
+            await historyRepository.add(kitsuId, sanitizedProgress.eventType || 'Progress Updated', sanitizedProgress);
+            return updated;
+        });
     }
 
     async getStats() {
