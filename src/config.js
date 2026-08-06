@@ -22,5 +22,9 @@ module.exports = {
 
     kitsu: {
         baseUrl: 'https://kitsu.io/api/edge',
-    }
+    },
+
+    // Preview cache TTL (ms) and interaction timeout (ms)
+    previewCacheTTLMs: process.env.PREVIEW_CACHE_TTL_MS ? parseInt(process.env.PREVIEW_CACHE_TTL_MS, 10) : 5 * 60 * 1000,
+    interactionTimeoutMs: process.env.INTERACTION_TIMEOUT_MS ? parseInt(process.env.INTERACTION_TIMEOUT_MS, 10) : 5 * 60 * 1000
 };

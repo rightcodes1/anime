@@ -1,6 +1,12 @@
-const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const {
+  ModalBuilder, TextInputBuilder, TextInputStyle,
+  ActionRowBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle,
+  StringSelectMenuBuilder
+} = require('discord.js');
 const animeService = require('../services/animeService');
 const logger = require('../utils/logger');
+const previewCache = require('../cache/previewCache');
+const config = require('../config');
 
 class InteractionHandler {
     constructor(client, dashboardService) {
@@ -22,6 +28,8 @@ class InteractionHandler {
         try {
             if (interaction.isButton()) {
                 await this.handleButton(interaction);
+            } else if (interaction.isStringSelectMenu && interaction.isStringSelectMenu()) {
+                await this.handleSelectMenu(interaction);
             } else if (interaction.isModalSubmit()) {
                 await this.handleModal(interaction);
             }
@@ -63,7 +71,7 @@ class InteractionHandler {
             // to or deferred yet, so it must acknowledge + edit in one call.
             await interaction.update({ content: "Search cancelled.", embeds: [], components: [] });
         } else if (customId.startsWith('status_')) {
-            // Format: status_{providerId}_{STATUSKEY}
+            // Backwards-compat: some messages may still have buttons — support them.
             const parts = customId.split('_');
             const providerId = parseInt(parts[1], 10);
             const statusKey = parts.slice(2).join('_'); // e.g. COMPLETED, WATCHING, ON_HOLD, PLAN, DROPPED, CANCEL
@@ -74,13 +82,11 @@ class InteractionHandler {
                 return;
             }
 
-            // For options that need progress, show a modal to collect season/episode.
             if (['WATCHING', 'ON_HOLD', 'DROPPED'].includes(statusKey)) {
                 await this.showProgressModal(interaction, providerId, statusKey);
                 return;
             }
 
-            // Immediate actions: PLAN and COMPLETED
             await interaction.deferUpdate();
             const animeData = await animeService.getAnimeFromProvider(providerId);
             if (!animeData) {
@@ -96,7 +102,6 @@ class InteractionHandler {
             }
 
             if (statusKey === 'COMPLETED') {
-                // Save anime and mark as completed. If episode_count known, set progress to max.
                 await animeService.addAnimeToLibrary(animeData, 'Completed');
                 if (animeData.episodeCount) {
                     await animeService.updateProgress(providerId, {
@@ -211,12 +216,18 @@ class InteractionHandler {
 
             const anime = results.provider[0];
             const embed = this.buildPreviewEmbed(anime);
-            const rows = this.buildPreviewButtons(anime.providerId);
+
+            // Cache preview data for this user/session to avoid repeat provider calls.
+            const cacheKey = `${interaction.user.id}:${anime.providerId}`;
+            previewCache.set(cacheKey, anime);
+
+            // Build select menu for status selection.
+            const statusRow = this.buildStatusSelect(interaction.user.id, anime.providerId);
 
             await interaction.editReply({
                 content: "Is this the anime you're looking for?",
                 embeds: [embed],
-                components: rows
+                components: [statusRow]
             });
         } else if (interaction.customId.startsWith('ep_modal_')) {
             const providerId = parseInt(interaction.customId.split('_')[2], 10);
@@ -309,23 +320,111 @@ class InteractionHandler {
             .setColor('#f1c40f');
     }
 
-    buildPreviewButtons(providerId) {
-        // Status selection buttons shown on preview (no DB changes until user picks one)
-        const row1 = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder().setCustomId(`status_${providerId}_COMPLETED`).setLabel('🟢 Finished').setStyle(ButtonStyle.Success),
-                new ButtonBuilder().setCustomId(`status_${providerId}_WATCHING`).setLabel('🔵 Currently Watching').setStyle(ButtonStyle.Primary),
-                new ButtonBuilder().setCustomId(`status_${providerId}_ON_HOLD`).setLabel('⏸️ On Hold').setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder().setCustomId(`status_${providerId}_PLAN`).setLabel('📅 Plan to Watch').setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder().setCustomId(`status_${providerId}_DROPPED`).setLabel('🔴 Dropped').setStyle(ButtonStyle.Danger)
-            );
+    buildStatusSelect(userId, providerId) {
+        const menu = new StringSelectMenuBuilder()
+            .setCustomId(`status_select:${userId}:${providerId}`)
+            .setPlaceholder('Choose a status')
+            .addOptions([
+                { label: 'Completed', value: 'COMPLETED', description: 'I finished this anime' },
+                { label: 'Currently Watching', value: 'WATCHING', description: 'I am watching this now' },
+                { label: 'On Hold', value: 'ON_HOLD', description: 'Paused for now' },
+                { label: 'Plan to Watch', value: 'PLAN', description: 'I plan to watch this' },
+                { label: 'Dropped', value: 'DROPPED', description: 'I dropped this' },
+                { label: 'Cancel', value: 'CANCEL', description: 'Do not add' }
+            ]);
 
-        const row2 = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder().setCustomId(`status_${providerId}_CANCEL`).setLabel('❌ Cancel').setStyle(ButtonStyle.Secondary)
-            );
+        return new ActionRowBuilder().addComponents(menu);
+    }
 
-        return [row1, row2];
+    // Handle the select menu interaction
+    async handleSelectMenu(interaction) {
+        // customId format: status_select:{userId}:{providerId}
+        const [prefix, userId, providerIdStr] = interaction.customId.split(':');
+        const providerId = parseInt(providerIdStr, 10);
+
+        // Ensure only the original user may act on this select.
+        if (interaction.user.id !== userId) {
+            await interaction.reply({ content: "This selection isn't for you.", ephemeral: true });
+            return;
+        }
+
+        // Prevent re-use: disable the menu immediately in the original message
+        try {
+            const disabledRow = interaction.message.components.map(row => {
+                const components = row.components.map(c => ({ ...c, disabled: true }));
+                return new ActionRowBuilder().addComponents(...components);
+            });
+            await interaction.update({ content: interaction.message.content, embeds: interaction.message.embeds, components: disabledRow });
+        } catch (e) {
+            logger.debug('Failed to disable components after selection:', e);
+        }
+
+        const selected = interaction.values && interaction.values[0];
+        if (!selected || selected === 'CANCEL') {
+            // Nothing to save — user cancelled.
+            await interaction.followUp({ content: 'Cancelled. No changes were made.', ephemeral: true });
+            return;
+        }
+
+        // Load cached preview to avoid a provider call.
+        const cacheKey = `${interaction.user.id}:${providerId}`;
+        const animeData = previewCache.get(cacheKey);
+        if (!animeData) {
+            await interaction.followUp({ content: "Preview expired — please search again.", ephemeral: true });
+            return;
+        }
+
+        // For statuses that require progress, prompt via the existing progress modal
+        if (['WATCHING', 'ON_HOLD', 'DROPPED'].includes(selected)) {
+            // Reuse existing modal flow that collects season & episode.
+            await this.showProgressModal(interaction, providerId, selected);
+            return;
+        }
+
+        // Immediate-save statuses: PLAN and COMPLETED
+        if (selected === 'PLAN') {
+            try {
+                await animeService.addAnimeToLibrary(animeData, 'Plan To Watch');
+                await interaction.followUp({ content: `✅ Saved **${animeData.englishTitle}** as Plan To Watch.`, ephemeral: true });
+                await this.dashboardService.recoverOrcreate();
+            } catch (err) {
+                logger.error('Failed to save plan:', err);
+                await interaction.followUp({ content: 'Failed to save — please try again later.', ephemeral: true });
+            }
+            return;
+        }
+
+        if (selected === 'COMPLETED') {
+            try {
+                await animeService.addAnimeToLibrary(animeData, 'Completed');
+                if (animeData.episodeCount) {
+                    await animeService.updateProgress(providerId, {
+                        currentEpisode: animeData.episodeCount,
+                        status: 'Completed',
+                        eventType: 'Added as Completed'
+                    });
+                }
+                await interaction.followUp({ content: `✅ Saved **${animeData.englishTitle}** as Completed.`, ephemeral: true });
+                await this.dashboardService.recoverOrcreate();
+            } catch (err) {
+                logger.error('Failed to save completed:', err);
+                await interaction.followUp({ content: 'Failed to save — please try again later.', ephemeral: true });
+            }
+            return;
+        }
+    }
+
+    // Optionally: helper to disable components and mark interaction expired (called by any timeout logic).
+    async markInteractionExpired(message) {
+        try {
+            const disabledRow = message.components.map(row => {
+                const components = row.components.map(c => ({ ...c, disabled: true }));
+                return new ActionRowBuilder().addComponents(...components);
+            });
+            await message.edit({ content: `${message.content}\n\nThis interaction has expired.`, components: disabledRow });
+        } catch (e) {
+            logger.debug('Failed to mark interaction expired:', e);
+        }
     }
 }
 
