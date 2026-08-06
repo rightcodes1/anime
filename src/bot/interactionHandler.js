@@ -7,6 +7,7 @@ const animeService = require('../services/animeService');
 const logger = require('../utils/logger');
 const previewCache = require('../cache/previewCache');
 const config = require('../config');
+const dashboardHandler = require('./dashboardInteractionHandler');
 
 class InteractionHandler {
     constructor(client, dashboardService) {
@@ -149,6 +150,9 @@ class InteractionHandler {
                 logger.error('Failed to build library view:', err);
                 await interaction.editReply({ content: 'Failed to fetch your library — please try again later.' });
             }
+        } else if (customId.startsWith('lib_prev:') || customId.startsWith('lib_next:') || customId.startsWith('lib_page:')) {
+            // Delegate to dashboard handler for pagination
+            await dashboardHandler.handlePaginationButton(interaction, this.dashboardService);
         }
     }
 
@@ -338,6 +342,13 @@ class InteractionHandler {
 
     // Handle the select menu interaction
     async handleSelectMenu(interaction) {
+        // customId format: status_select:{userId}:{providerId}
+        if (interaction.customId === 'library_select') {
+            // Delegate library select handling to dashboard handler
+            await dashboardHandler.handleLibrarySelect(interaction, this.dashboardService);
+            return;
+        }
+
         // customId format: status_select:{userId}:{providerId}
         const [prefix, userId, providerIdStr] = interaction.customId.split(':');
         const providerId = parseInt(providerIdStr, 10);
