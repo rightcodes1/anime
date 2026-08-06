@@ -110,6 +110,34 @@ class ProgressRepository {
         return stats.rows[0];
     }
 
+    // Backwards-compatible helpers used by existing services.
+    // These mirror the old behavior returning raw DB rows with anime metadata.
+    async getCurrentlyWatching(limit = 5) {
+        const result = await db.execute({
+            sql: `SELECT p.*, a.english_title, a.episode_count
+                  FROM anime_progress p
+                  JOIN anime a ON a.kitsu_id = p.kitsu_id
+                  WHERE p.status = 'Watching'
+                  ORDER BY p.updated_at DESC
+                  LIMIT ?`,
+            args: [limit]
+        });
+        return result.rows;
+    }
+
+    async getFavorites(limit = 5) {
+        const result = await db.execute({
+            sql: `SELECT p.*, a.english_title
+                  FROM anime_progress p
+                  JOIN anime a ON a.kitsu_id = p.kitsu_id
+                  WHERE p.is_favorite = 1
+                  ORDER BY p.updated_at DESC
+                  LIMIT ?`,
+            args: [limit]
+        });
+        return result.rows;
+    }
+
     // Typed, limited filter API for Milestone 2.
     // Accepts a filter object and returns an integer count.
     // filter: { category?: string, favorite?: boolean }
