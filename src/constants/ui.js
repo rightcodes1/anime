@@ -18,6 +18,7 @@ module.exports = {
     history: '🕒'
   },
   defaults: {
-    dashboardDebounceMs: 2000
+    dashboardDebounceMs: 2000,
+    progressBarLength: 12
   }
 };

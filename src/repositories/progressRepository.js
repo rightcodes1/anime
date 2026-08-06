@@ -1,4 +1,14 @@
 const db = require('../database/database');
+const libraryDomain = require('../constants/libraryDomain');
+
+// Responsible for all SQL related to the anime_progress table. Exposes a small,
+// typed API used by LibraryService. The methods accept business concepts
+// (filters/pagination/sort) and translate them to SQL internally.
+const SORT_COLUMN_MAP = Object.freeze({
+    [libraryDomain.LibrarySort.UPDATED]: 'p.updated_at',
+    [libraryDomain.LibrarySort.EPISODE]: 'p.current_episode',
+    [libraryDomain.LibrarySort.REWATCHS]: 'p.rewatch_count'
+});
 
 class ProgressRepository {
     async getByKitsuId(kitsuId) {
@@ -9,20 +19,7 @@ class ProgressRepository {
         return result.rows[0] || null;
     }
 
-    /**
-     * Atomic upsert: a single INSERT ... ON CONFLICT DO UPDATE statement.
-     *
-     * The old version read the row, computed new values in JS, then wrote
-     * them back — two interactions racing on the same kitsu_id (e.g. a
-     * double-tapped "episode +1" button) could interleave and one update
-     * would silently overwrite the other. This version never reads before
-     * writing: on conflict, each column falls back to COALESCE(new value,
-     * existing value) evaluated by SQLite itself in the same statement that
-     * does the write, so there's no window for a lost update.
-     */
     async upsert(kitsuId, progressData) {
-        const now = new Date().toISOString();
-
         const status = progressData.status ?? null;
         const currentEntry = progressData.currentEntry ?? null;
         const currentEpisode = progressData.currentEpisode ?? null;
@@ -65,10 +62,6 @@ class ProgressRepository {
         return this.getByKitsuId(kitsuId);
     }
 
-    /**
-     * Atomic flip — a single UPDATE that computes the new value in SQL, so
-     * two rapid clicks can't both read "false" and both write "true".
-     */
     async toggleFavorite(kitsuId) {
         const result = await db.execute({
             sql: `UPDATE anime_progress
@@ -88,7 +81,7 @@ class ProgressRepository {
             sql: `UPDATE anime_progress SET 
                   status = 'Watching', 
                   current_episode = 0, 
-                  rewatch_count = rewatch_count + 1,
+                  rewatch_count = COALESCE(rewatch_count, 0) + 1,
                   updated_at = CURRENT_TIMESTAMP 
                   WHERE kitsu_id = ?`,
             args: [kitsuId]
@@ -110,36 +103,92 @@ class ProgressRepository {
                 SUM(CASE WHEN status = 'Dropped' THEN 1 ELSE 0 END) as dropped,
                 SUM(CASE WHEN status = 'Plan To Watch' THEN 1 ELSE 0 END) as planning,
                 AVG(rating) as avg_rating,
-                SUM(current_episode) as total_episodes
+                SUM(current_episode) as total_episodes,
+                MAX(updated_at) as updated_at
             FROM anime_progress
         `);
         return stats.rows[0];
     }
 
-    async getCurrentlyWatching(limit = 5) {
-        const result = await db.execute({
-            sql: `SELECT p.*, a.english_title, a.episode_count
-                  FROM anime_progress p
-                  JOIN anime a ON a.kitsu_id = p.kitsu_id
-                  WHERE p.status = 'Watching'
-                  ORDER BY p.updated_at DESC
-                  LIMIT ?`,
-            args: [limit]
-        });
-        return result.rows;
+    // Typed, limited filter API for Milestone 2.
+    // Accepts a filter object and returns an integer count.
+    // filter: { category?: string, favorite?: boolean }
+    async countLibraryItems({ filter = {} } = {}) {
+        const where = [];
+        const args = [];
+
+        if (filter.category) {
+            const cfg = libraryDomain.CATEGORY_CONFIG[filter.category];
+            if (cfg && cfg.databaseStatus) {
+                where.push('p.status = ?');
+                args.push(cfg.databaseStatus);
+            }
+        }
+        if (typeof filter.favorite === 'boolean') {
+            where.push('p.is_favorite = ?');
+            args.push(filter.favorite ? 1 : 0);
+        }
+
+        const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+        const sql = `SELECT COUNT(*) as cnt FROM anime_progress p ${whereSql}`;
+        const res = await db.execute({ sql, args });
+        return res.rows.length ? res.rows[0].cnt : 0;
     }
 
-    async getFavorites(limit = 5) {
-        const result = await db.execute({
-            sql: `SELECT p.*, a.english_title
-                  FROM anime_progress p
-                  JOIN anime a ON a.kitsu_id = p.kitsu_id
-                  WHERE p.is_favorite = 1
-                  ORDER BY p.updated_at DESC
-                  LIMIT ?`,
-            args: [limit]
-        });
-        return result.rows;
+    /*
+     * getLibraryPage
+     * params: {
+     *   filter: { category?: string, favorite?: boolean },
+     *   pagination: { page: number, pageSize: number },
+     *   sort: { field: libraryDomain.LibrarySort, direction: 'ASC'|'DESC' }
+     * }
+     * Returns: array of domain objects: { kitsuId, title, posterUrl, episodeCount, currentEpisode, rating, status, updatedAt, isFavorite }
+     */
+    async getLibraryPage({ filter = {}, pagination = { page: 1, pageSize: libraryDomain.defaults.pageSize }, sort = { field: libraryDomain.LibrarySort.UPDATED, direction: 'DESC' } } = {}) {
+        const where = [];
+        const args = [];
+
+        if (filter.category) {
+            const cfg = libraryDomain.CATEGORY_CONFIG[filter.category];
+            if (cfg && cfg.databaseStatus) {
+                where.push('p.status = ?');
+                args.push(cfg.databaseStatus);
+            }
+        }
+        if (typeof filter.favorite === 'boolean') {
+            where.push('p.is_favorite = ?');
+            args.push(filter.favorite ? 1 : 0);
+        }
+
+        const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+        const sortCol = SORT_COLUMN_MAP[sort.field] || SORT_COLUMN_MAP[libraryDomain.LibrarySort.UPDATED];
+        const sortDir = (sort.direction === 'ASC') ? 'ASC' : 'DESC';
+
+        const page = Math.max(1, parseInt(pagination.page, 10) || 1);
+        const pageSize = Math.max(1, parseInt(pagination.pageSize, 10) || libraryDomain.defaults.pageSize);
+        const offset = (page - 1) * pageSize;
+
+        const sql = `SELECT p.*, a.english_title, a.episode_count, a.poster_url
+                     FROM anime_progress p
+                     JOIN anime a ON a.kitsu_id = p.kitsu_id
+                     ${whereSql}
+                     ORDER BY ${sortCol} ${sortDir}
+                     LIMIT ? OFFSET ?`;
+
+        const res = await db.execute({ sql, args: [...args, pageSize, offset] });
+        // Map DB rows to stable domain objects so callers don't depend on raw columns
+        return res.rows.map(r => ({
+            kitsuId: r.kitsu_id,
+            title: r.english_title,
+            posterUrl: r.poster_url,
+            episodeCount: r.episode_count,
+            currentEpisode: r.current_episode,
+            rating: r.rating,
+            status: r.status,
+            updatedAt: r.updated_at,
+            isFavorite: !!r.is_favorite
+        }));
     }
 }
 
