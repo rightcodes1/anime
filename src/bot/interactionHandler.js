@@ -349,12 +349,14 @@ class InteractionHandler {
         }
 
         // Prevent re-use: disable the menu immediately in the original message
+        let updateSucceeded = false;
         try {
             const disabledRow = interaction.message.components.map(row => {
                 const components = row.components.map(c => ({ ...c, disabled: true }));
                 return new ActionRowBuilder().addComponents(...components);
             });
             await interaction.update({ content: interaction.message.content, embeds: interaction.message.embeds, components: disabledRow });
+            updateSucceeded = true;
         } catch (e) {
             logger.debug('Failed to disable components after selection:', e);
         }
@@ -362,7 +364,13 @@ class InteractionHandler {
         const selected = interaction.values && interaction.values[0];
         if (!selected || selected === 'CANCEL') {
             // Nothing to save — user cancelled.
-            await interaction.followUp({ content: 'Cancelled. No changes were made.', ephemeral: true });
+            const content = 'Cancelled. No changes were made.';
+            if (interaction.replied || interaction.deferred) {
+                await interaction.followUp({ content, ephemeral: true });
+            } else {
+                // If update didn't acknowledge the interaction, reply instead.
+                await interaction.reply({ content, ephemeral: true });
+            }
             return;
         }
 
@@ -370,7 +378,12 @@ class InteractionHandler {
         const cacheKey = `${interaction.user.id}:${providerId}`;
         const animeData = previewCache.get(cacheKey);
         if (!animeData) {
-            await interaction.followUp({ content: "Preview expired — please search again.", ephemeral: true });
+            const content = "Preview expired — please search again.";
+            if (interaction.replied || interaction.deferred) {
+                await interaction.followUp({ content, ephemeral: true });
+            } else {
+                await interaction.reply({ content, ephemeral: true });
+            }
             return;
         }
 
@@ -385,11 +398,21 @@ class InteractionHandler {
         if (selected === 'PLAN') {
             try {
                 await animeService.addAnimeToLibrary(animeData, 'Plan To Watch');
-                await interaction.followUp({ content: `✅ Saved **${animeData.englishTitle}** as Plan To Watch.`, ephemeral: true });
+                const content = `✅ Saved **${animeData.englishTitle}** as Plan To Watch.`;
+                if (interaction.replied || interaction.deferred) {
+                    await interaction.followUp({ content, ephemeral: true });
+                } else {
+                    await interaction.reply({ content, ephemeral: true });
+                }
                 await this.dashboardService.recoverOrcreate();
             } catch (err) {
                 logger.error('Failed to save plan:', err);
-                await interaction.followUp({ content: 'Failed to save — please try again later.', ephemeral: true });
+                const content = 'Failed to save — please try again later.';
+                if (interaction.replied || interaction.deferred) {
+                    await interaction.followUp({ content, ephemeral: true });
+                } else {
+                    await interaction.reply({ content, ephemeral: true });
+                }
             }
             return;
         }
@@ -404,11 +427,21 @@ class InteractionHandler {
                         eventType: 'Added as Completed'
                     });
                 }
-                await interaction.followUp({ content: `✅ Saved **${animeData.englishTitle}** as Completed.`, ephemeral: true });
+                const content = `✅ Saved **${animeData.englishTitle}** as Completed.`;
+                if (interaction.replied || interaction.deferred) {
+                    await interaction.followUp({ content, ephemeral: true });
+                } else {
+                    await interaction.reply({ content, ephemeral: true });
+                }
                 await this.dashboardService.recoverOrcreate();
             } catch (err) {
                 logger.error('Failed to save completed:', err);
-                await interaction.followUp({ content: 'Failed to save — please try again later.', ephemeral: true });
+                const content = 'Failed to save — please try again later.';
+                if (interaction.replied || interaction.deferred) {
+                    await interaction.followUp({ content, ephemeral: true });
+                } else {
+                    await interaction.reply({ content, ephemeral: true });
+                }
             }
             return;
         }
