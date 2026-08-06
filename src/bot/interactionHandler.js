@@ -363,8 +363,18 @@ class InteractionHandler {
         let updateSucceeded = false;
         try {
             const disabledRow = interaction.message.components.map(row => {
-                const components = row.components.map(c => ({ ...c, disabled: true }));
-                return new ActionRowBuilder().addComponents(...components);
+                const newRow = ActionRowBuilder.from(row);
+                const newComponents = row.components.map(c => {
+                    if (c.type === 2) {
+                        return ButtonBuilder.from(c).setDisabled(true);
+                    }
+                    if (c.type === 3) {
+                        return StringSelectMenuBuilder.from(c).setDisabled(true);
+                    }
+                    return c;
+                });
+                newRow.setComponents(...newComponents);
+                return newRow;
             });
             await interaction.update({ content: interaction.message.content, embeds: interaction.message.embeds, components: disabledRow });
             updateSucceeded = true;
@@ -462,8 +472,18 @@ class InteractionHandler {
     async markInteractionExpired(message) {
         try {
             const disabledRow = message.components.map(row => {
-                const components = row.components.map(c => ({ ...c, disabled: true }));
-                return new ActionRowBuilder().addComponents(...components);
+                const newRow = ActionRowBuilder.from(row);
+                const newComponents = row.components.map(c => {
+                    if (c.type === 2) {
+                        return ButtonBuilder.from(c).setDisabled(true);
+                    }
+                    if (c.type === 3) {
+                        return StringSelectMenuBuilder.from(c).setDisabled(true);
+                    }
+                    return c;
+                });
+                newRow.setComponents(...newComponents);
+                return newRow;
             });
             await message.edit({ content: `${message.content}\n\nThis interaction has expired.`, components: disabledRow });
         } catch (e) {
