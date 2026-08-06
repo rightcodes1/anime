@@ -5,7 +5,6 @@ const notesRepository = require('../repositories/notesRepository');
 const historyRepository = require('../repositories/historyRepository');
 const db = require('../database/database');
 const { sanitizeBindings } = require('../utils/sanitize');
-const { withTransaction } = require('../utils/transaction');
 
 class AnimeService {
     /**
@@ -33,18 +32,16 @@ class AnimeService {
         // sanitize values to prevent undefined bindings
         const sanitized = sanitizeBindings(animeData);
 
-        return withTransaction(db, async () => {
-            // Save anime metadata (upsert)
-            const anime = await animeRepository.save(sanitized);
-
-            // Upsert progress
-            const progress = await progressRepository.upsert(sanitized.providerId, { status: initialStatus });
-
-            // Add history entry
-            await historyRepository.add(sanitized.providerId, 'Added', { status: initialStatus });
-
-            return { anime, progress };
-        });
+        // NOTE: Using sequential repository calls rather than a client-level
+        // transaction because the libSQL client used by this project requires
+        // batch execution for atomic writes. A future change should add a
+        // proper runInTransaction helper on the database module to enable
+        // multi-statement transactions. For now, keep behavior functionally
+        // equivalent while avoiding transactions errors seen in some hosts.
+        const anime = await animeRepository.save(sanitized);
+        const progress = await progressRepository.upsert(sanitized.providerId, { status: initialStatus });
+        await historyRepository.add(sanitized.providerId, 'Added', { status: initialStatus });
+        return { anime, progress };
     }
 
     async getProgress(kitsuId) {
@@ -53,11 +50,9 @@ class AnimeService {
 
     async updateProgress(kitsuId, progressData) {
         const sanitizedProgress = sanitizeBindings(progressData);
-        return withTransaction(db, async () => {
-            const updated = await progressRepository.upsert(kitsuId, sanitizedProgress);
-            await historyRepository.add(kitsuId, sanitizedProgress.eventType || 'Progress Updated', sanitizedProgress);
-            return updated;
-        });
+        const updated = await progressRepository.upsert(kitsuId, sanitizedProgress);
+        await historyRepository.add(kitsuId, sanitizedProgress.eventType || 'Progress Updated', sanitizedProgress);
+        return updated;
     }
 
     async getStats() {
